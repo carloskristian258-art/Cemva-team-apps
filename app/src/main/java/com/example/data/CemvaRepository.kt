@@ -10,7 +10,8 @@ class CemvaRepository(
     private val trainingDao: TrainingDao,
     private val equipmentDao: EquipmentDao,
     private val announcementDao: AnnouncementDao,
-    private val attendanceDao: AttendanceDao
+    private val attendanceDao: AttendanceDao,
+    private val userAccountDao: UserAccountDao
 ) {
     val allMembers: Flow<List<MemberEntity>> = memberDao.getAllMembers()
     val allOperations: Flow<List<OperationEntity>> = operationDao.getAllOperations()
@@ -19,8 +20,14 @@ class CemvaRepository(
     val allEquipment: Flow<List<EquipmentEntity>> = equipmentDao.getAllEquipment()
     val allAnnouncements: Flow<List<AnnouncementEntity>> = announcementDao.getAllAnnouncements()
     val allAttendance: Flow<List<AttendanceRecordEntity>> = attendanceDao.getAllAttendance()
+    val allUserAccounts: Flow<List<UserAccountEntity>> = userAccountDao.getAllUserAccounts()
 
     suspend fun getMemberById(id: String): MemberEntity? = memberDao.getMemberById(id)
+    suspend fun getUserAccountByEmail(email: String): UserAccountEntity? = userAccountDao.getUserAccountByEmail(email)
+
+    suspend fun insertUserAccount(user: UserAccountEntity) = userAccountDao.insertUserAccount(user)
+    suspend fun updateUserAccount(user: UserAccountEntity) = userAccountDao.updateUserAccount(user)
+    suspend fun deleteUserAccount(user: UserAccountEntity) = userAccountDao.deleteUserAccount(user)
 
     suspend fun insertMember(member: MemberEntity) = memberDao.insertMember(member)
     suspend fun updateMember(member: MemberEntity) = memberDao.updateMember(member)
@@ -273,6 +280,41 @@ class CemvaRepository(
                     type = "Check-In",
                     method = "QR Code",
                     activity = "Duty"
+                )
+            )
+
+            // 8. Prepopulate User Accounts for Login & Sync
+            userAccountDao.insertUserAccount(
+                UserAccountEntity(
+                    email = "carloskristian258@gmail.com",
+                    passwordHash = "admin123", // Simple plain-text or hash for this application
+                    name = "Carlos Kristian",
+                    phone = "0917-555-0101",
+                    role = "ADMIN",
+                    memberId = "CEMVA-2026-001",
+                    isApproved = true
+                )
+            )
+            userAccountDao.insertUserAccount(
+                UserAccountEntity(
+                    email = "maria.santos@cemva.org",
+                    passwordHash = "maria123",
+                    name = "Maria Santos",
+                    phone = "0918-123-4567",
+                    role = "MEMBER",
+                    memberId = "CEMVA-2026-002",
+                    isApproved = true
+                )
+            )
+            userAccountDao.insertUserAccount(
+                UserAccountEntity(
+                    email = "juan.delacruz@cemva.org",
+                    passwordHash = "juan123",
+                    name = "Juan Dela Cruz",
+                    phone = "0920-987-6543",
+                    role = "MEMBER",
+                    memberId = "CEMVA-2026-003",
+                    isApproved = true
                 )
             )
         }

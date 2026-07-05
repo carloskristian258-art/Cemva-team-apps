@@ -104,3 +104,22 @@ interface AttendanceDao {
     @Query("DELETE FROM attendance WHERE id = :id")
     suspend fun deleteAttendanceById(id: Int)
 }
+
+@Dao
+interface UserAccountDao {
+    @Query("SELECT * FROM user_accounts ORDER BY email ASC")
+    fun getAllUserAccounts(): Flow<List<UserAccountEntity>>
+
+    @Query("SELECT * FROM user_accounts WHERE email = :email LIMIT 1")
+    suspend fun getUserAccountByEmail(email: String): UserAccountEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertUserAccount(user: UserAccountEntity)
+
+    @Update
+    suspend fun updateUserAccount(user: UserAccountEntity)
+
+    @Delete
+    suspend fun deleteUserAccount(user: UserAccountEntity)
+}
+

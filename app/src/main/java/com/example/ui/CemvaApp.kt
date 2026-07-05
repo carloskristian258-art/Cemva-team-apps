@@ -1,5 +1,6 @@
 package com.example.ui
 
+import kotlinx.coroutines.launch
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -45,10 +46,40 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.*
 
+// CameraX, ML Kit and Permissions imports for QR Scanning
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.RepeatMode
+import com.google.mlkit.vision.barcode.BarcodeScanning
+import com.google.mlkit.vision.common.InputImage
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.isGranted
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RectF
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CemvaApp(viewModel: CemvaViewModel) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val currentScreen by viewModel.currentScreen
     val userRole by viewModel.currentUserRole
     val userEmail by viewModel.currentUserEmail
@@ -61,6 +92,7 @@ fun CemvaApp(viewModel: CemvaViewModel) {
     val equipmentList by viewModel.equipment.collectAsStateWithLifecycle()
     val reportsList by viewModel.reports.collectAsStateWithLifecycle()
     val attendanceList by viewModel.attendance.collectAsStateWithLifecycle()
+    val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
 
     // Dialog trigger states
     var showLoginDialog by remember { mutableStateOf(false) }
@@ -71,6 +103,7 @@ fun CemvaApp(viewModel: CemvaViewModel) {
     var showAddAnnouncementDialog by remember { mutableStateOf(false) }
     var showAddReportDialog by remember { mutableStateOf(false) }
     var showAttendanceDialog by remember { mutableStateOf(false) }
+    var showCameraScanner by remember { mutableStateOf(false) }
 
     // Secondary Screen State (for "More" sub-navigation)
     var currentSubScreen by remember { mutableStateOf<String?>(null) }
@@ -127,6 +160,34 @@ fun CemvaApp(viewModel: CemvaViewModel) {
                         UserRole.MEMBER -> "JD"
                         UserRole.GUEST -> "G"
                     }
+
+                    // Live Cloud Sync Indicator Badge
+                    IconButton(
+                        onClick = {
+                            viewModel.currentScreen.value = "more"
+                            currentSubScreen = "settings"
+                        }
+                    ) {
+                        Icon(
+                            imageVector = when (syncStatus) {
+                                SyncStatus.SYNCING -> Icons.Default.Sync
+                                SyncStatus.SUCCESS -> Icons.Default.CloudQueue
+                                SyncStatus.ERROR -> Icons.Default.CloudOff
+                                else -> Icons.Default.CloudQueue
+                            },
+                            contentDescription = "Cloud Status",
+                            tint = when (syncStatus) {
+                                SyncStatus.SYNCING -> Color.Blue
+                                SyncStatus.SUCCESS -> Color(0xFF10B981) // Emerald Green
+                                SyncStatus.ERROR -> Color.Red
+                                else -> Color.Gray
+                            },
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(4.dp))
+
                     // Sleek Profile Avatar Button
                     Box(
                         modifier = Modifier
@@ -299,9 +360,27 @@ fun CemvaApp(viewModel: CemvaViewModel) {
 
     // --- DIALOG IMPLEMENTATIONS ---
 
-    // 1. Login / Identity Switcher Dialog
+    // 1. Login & Signup/Register Tabbed Dialog
     if (showLoginDialog) {
         Dialog(onDismissRequest = { showLoginDialog = false }) {
+            var activeTab by remember { mutableStateOf("login") } // "login" or "register"
+
+            // Login States
+            var loginEmail by remember { mutableStateOf("") }
+            var loginPassword by remember { mutableStateOf("") }
+            var isLoginPasswordVisible by remember { mutableStateOf(false) }
+
+            // Register States
+            var regName by remember { mutableStateOf("") }
+            var regEmail by remember { mutableStateOf("") }
+            var regPhone by remember { mutableStateOf("") }
+            var regPassword by remember { mutableStateOf("") }
+            var isRegPasswordVisible by remember { mutableStateOf(false) }
+            var requestedRole by remember { mutableStateOf("GUEST") } // "GUEST", "MEMBER", "ADMIN"
+            var isRoleDropdownExpanded by remember { mutableStateOf(false) }
+
+            var showQuickBypass by remember { mutableStateOf(false) }
+
             Card(
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -310,71 +389,325 @@ fun CemvaApp(viewModel: CemvaViewModel) {
                     .padding(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(24.dp),
+                    modifier = Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Sign In",
+                        imageVector = if (activeTab == "login") Icons.Default.Lock else Icons.Default.PersonAdd,
+                        contentDescription = "Auth",
                         tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(44.dp)
                     )
                     Text(
-                        text = "CEMVA Sign-In Portal",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
-                    )
-                    Text(
-                        text = "Sign in using your Google credentials to authenticate permissions.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        text = if (activeTab == "login") "Sign In to CEMVA" else "Register Volunteer Account",
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         textAlign = TextAlign.Center
                     )
 
-                    Divider()
-
-                    // Quick switcher buttons
-                    Button(
-                        onClick = {
-                            viewModel.signInAs("carloskristian258@gmail.com", UserRole.ADMIN, "CEMVA-2026-001")
-                            showLoginDialog = false
-                            Toast.makeText(context, "Logged in as Administrator", Toast.LENGTH_SHORT).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.fillMaxWidth()
+                    // Tab Selector
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(Icons.Default.AdminPanelSettings, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Sign In as Administrator (Carlos K.)")
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (activeTab == "login") MaterialTheme.colorScheme.primary else Color.Transparent)
+                                .clickable { activeTab = "login" }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Sign In",
+                                color = if (activeTab == "login") Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (activeTab == "register") MaterialTheme.colorScheme.primary else Color.Transparent)
+                                .clickable { activeTab = "register" }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "Register",
+                                color = if (activeTab == "register") Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
                     }
 
-                    Button(
-                        onClick = {
-                            viewModel.signInAs("maria.santos@cemva.org", UserRole.MEMBER, "CEMVA-2026-002")
-                            showLoginDialog = false
-                            Toast.makeText(context, "Logged in as EMS Volunteer", Toast.LENGTH_SHORT).show()
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.VerifiedUser, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Sign In as Member (Maria S.)")
-                    }
+                    if (activeTab == "login") {
+                        // Email Field
+                        OutlinedTextField(
+                            value = loginEmail,
+                            onValueChange = { loginEmail = it },
+                            label = { Text("Email Address") },
+                            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
 
-                    OutlinedButton(
-                        onClick = {
-                            viewModel.logout()
-                            showLoginDialog = false
-                            Toast.makeText(context, "Continuing as Guest / Applicant", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.PersonOutline, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Continue as Guest / Applicant")
+                        // Password Field
+                        OutlinedTextField(
+                            value = loginPassword,
+                            onValueChange = { loginPassword = it },
+                            label = { Text("Password") },
+                            leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) },
+                            trailingIcon = {
+                                IconButton(onClick = { isLoginPasswordVisible = !isLoginPasswordVisible }) {
+                                    Icon(
+                                        imageVector = if (isLoginPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = "Toggle password"
+                                    )
+                                }
+                            },
+                            visualTransformation = if (isLoginPasswordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        Button(
+                            onClick = {
+                                if (loginEmail.isBlank() || loginPassword.isBlank()) {
+                                    Toast.makeText(context, "Please fill in all credentials", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                coroutineScope.launch {
+                                    val success = viewModel.login(loginEmail.trim(), loginPassword)
+                                    if (success) {
+                                        Toast.makeText(context, "Successfully authenticated!", Toast.LENGTH_SHORT).show()
+                                        showLoginDialog = false
+                                    } else {
+                                        Toast.makeText(context, "Invalid email or password", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text("Authenticate & Sign In", fontWeight = FontWeight.Bold)
+                        }
+
+                        Divider(modifier = Modifier.padding(vertical = 8.dp))
+
+                        // Quick demo logins
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .clickable { showQuickBypass = !showQuickBypass }
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (showQuickBypass) "Hide Demo Bypass Channels" else "Show Demo Bypass Channels",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                Icon(
+                                    imageVector = if (showQuickBypass) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+
+                            if (showQuickBypass) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = {
+                                        viewModel.signInAs("carloskristian258@gmail.com", UserRole.ADMIN, "CEMVA-2026-001")
+                                        showLoginDialog = false
+                                        Toast.makeText(context, "Bypassed as Administrator", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.AdminPanelSettings, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Bypass as Admin (Carlos K.)", fontSize = 12.sp)
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Button(
+                                    onClick = {
+                                        viewModel.signInAs("maria.santos@cemva.org", UserRole.MEMBER, "CEMVA-2026-002")
+                                        showLoginDialog = false
+                                        Toast.makeText(context, "Bypassed as EMS Volunteer", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.8f)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Bypass as Member (Maria S.)", fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                    } else {
+                        // Register Fields
+                        OutlinedTextField(
+                            value = regName,
+                            onValueChange = { regName = it },
+                            label = { Text("Full Name") },
+                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = regEmail,
+                            onValueChange = { regEmail = it },
+                            label = { Text("Email Address") },
+                            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = regPhone,
+                            onValueChange = { regPhone = it },
+                            label = { Text("Mobile Phone Number") },
+                            leadingIcon = { Icon(Icons.Default.Phone, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        OutlinedTextField(
+                            value = regPassword,
+                            onValueChange = { regPassword = it },
+                            label = { Text("Create Secure Password") },
+                            leadingIcon = { Icon(Icons.Default.VpnKey, contentDescription = null) },
+                            trailingIcon = {
+                                IconButton(onClick = { isRegPasswordVisible = !isRegPasswordVisible }) {
+                                    Icon(
+                                        imageVector = if (isRegPasswordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                        contentDescription = "Toggle password"
+                                    )
+                                }
+                            },
+                            visualTransformation = if (isRegPasswordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+
+                        // Role Selection Box with simple simulated expandable dropdown
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            OutlinedTextField(
+                                value = when (requestedRole) {
+                                    "ADMIN" -> "Officer / Administrator"
+                                    "MEMBER" -> "Active Duty Volunteer"
+                                    else -> "Guest / Applicant"
+                                },
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Request Organization Role") },
+                                leadingIcon = { Icon(Icons.Default.Badge, contentDescription = null) },
+                                trailingIcon = {
+                                    IconButton(onClick = { isRoleDropdownExpanded = !isRoleDropdownExpanded }) {
+                                        Icon(
+                                            imageVector = if (isRoleDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                                            contentDescription = "Dropdown"
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            
+                            DropdownMenu(
+                                expanded = isRoleDropdownExpanded,
+                                onDismissRequest = { isRoleDropdownExpanded = false },
+                                modifier = Modifier.fillMaxWidth(0.8f)
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Guest / Applicant (Instant Access)") },
+                                    onClick = {
+                                        requestedRole = "GUEST"
+                                        isRoleDropdownExpanded = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Active Duty Volunteer (Awaiting Admin Approval)") },
+                                    onClick = {
+                                        requestedRole = "MEMBER"
+                                        isRoleDropdownExpanded = false
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Officer / Administrator (Awaiting Admin Approval)") },
+                                    onClick = {
+                                        requestedRole = "ADMIN"
+                                        isRoleDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+
+                        if (requestedRole != "GUEST") {
+                            Text(
+                                text = "⚠️ Admin & Volunteer accounts require approval from Carlos Kristian before accessing operational logs.",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = MaterialTheme.colorScheme.secondary,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                if (regName.isBlank() || regEmail.isBlank() || regPhone.isBlank() || regPassword.isBlank()) {
+                                    Toast.makeText(context, "Please populate all fields", Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                coroutineScope.launch {
+                                    val ok = viewModel.register(
+                                        email = regEmail.trim(),
+                                        password = regPassword,
+                                        name = regName.trim(),
+                                        phone = regPhone.trim(),
+                                        requestedRole = requestedRole
+                                    )
+                                    if (ok) {
+                                        Toast.makeText(context, "Account Registered! Logging in...", Toast.LENGTH_LONG).show()
+                                        // Auto log in after register if Guest
+                                        if (requestedRole == "GUEST") {
+                                            viewModel.login(regEmail.trim(), regPassword)
+                                            showLoginDialog = false
+                                        } else {
+                                            activeTab = "login"
+                                            loginEmail = regEmail
+                                            loginPassword = regPassword
+                                        }
+                                    } else {
+                                        Toast.makeText(context, "Registration failed. Email might already exist.", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Create & Sync Account", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -1120,6 +1453,20 @@ fun CemvaApp(viewModel: CemvaViewModel) {
                         }
                     }
 
+                    // Real Camera QR Code Scanner button
+                    Button(
+                        onClick = {
+                            showAttendanceDialog = false
+                            showCameraScanner = true
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Launch Camera QR Scanner")
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Scan QR Code with Camera")
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1176,6 +1523,27 @@ fun CemvaApp(viewModel: CemvaViewModel) {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    if (showCameraScanner) {
+        Dialog(
+            onDismissRequest = { showCameraScanner = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false
+            )
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                QrCodeCameraScanner(
+                    viewModel = viewModel,
+                    membersList = membersList,
+                    operationsList = operationsList,
+                    onClose = { showCameraScanner = false }
+                )
             }
         }
     }
@@ -3342,6 +3710,13 @@ fun SettingsSubScreen(viewModel: CemvaViewModel) {
     val urls by viewModel.googleUrls
     val userRole by viewModel.currentUserRole
 
+    val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
+    val lastSyncTime by viewModel.lastSyncTime.collectAsStateWithLifecycle()
+    val syncLogs by viewModel.syncLogs.collectAsStateWithLifecycle()
+    val firebaseDbUrl by viewModel.firebaseDbUrl.collectAsStateWithLifecycle()
+    val firebaseWebApiKey by viewModel.firebaseWebApiKey.collectAsStateWithLifecycle()
+    val isAutoSyncEnabled by viewModel.isAutoSyncEnabled.collectAsStateWithLifecycle()
+
     var formUrl by remember { mutableStateOf(urls.googleFormUrl) }
     var sheetUrl by remember { mutableStateOf(urls.googleSheetsUrl) }
     var driveUrl by remember { mutableStateOf(urls.googleDriveUrl) }
@@ -3469,6 +3844,752 @@ fun SettingsSubScreen(viewModel: CemvaViewModel) {
                     Icon(Icons.Default.Save, contentDescription = "Save integration")
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("Save & Sync Integrations")
+                }
+            }
+        }
+
+        // --- REAL TIME CLOUD SYNC CONFIGURATION ---
+        item {
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            Text(
+                "Google Firebase Real-Time Synchronization",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                "Provide real-time data sync with Google Firebase so multiple active devices instantly share member records, operational schedules, equipment check-outs, and PCR logs.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, Color.LightGray),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Sync status header
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        when (syncStatus) {
+                                            SyncStatus.SYNCING -> Color.Blue
+                                            SyncStatus.SUCCESS -> Color.Green
+                                            SyncStatus.ERROR -> Color.Red
+                                            else -> Color.Gray
+                                        }
+                                    )
+                            )
+                            Text(
+                                text = when (syncStatus) {
+                                    SyncStatus.SYNCING -> "Syncing Cloud..."
+                                    SyncStatus.SUCCESS -> "Online / Synced"
+                                    SyncStatus.ERROR -> "Offline / Sync Error"
+                                    else -> "Ready to Sync"
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        
+                        Text(
+                            text = lastSyncTime?.let { "Last Synced: ${it.substringAfter(" ")}" } ?: "Never Synced",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
+                    }
+
+                    // Firebase URL Field
+                    var dbUrl by remember { mutableStateOf(firebaseDbUrl) }
+                    OutlinedTextField(
+                        value = dbUrl,
+                        onValueChange = {
+                            if (userRole == UserRole.ADMIN) {
+                                dbUrl = it
+                                viewModel.updateFirebaseUrl(it)
+                            }
+                        },
+                        label = { Text("Firebase Realtime Database REST API URL") },
+                        placeholder = { Text("https://your-project.firebaseio.com/") },
+                        readOnly = userRole != UserRole.ADMIN,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Firebase Web API Key Field
+                    var apiKey by remember { mutableStateOf(firebaseWebApiKey) }
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = {
+                            if (userRole == UserRole.ADMIN) {
+                                apiKey = it
+                                viewModel.updateWebApiKey(it)
+                            }
+                        },
+                        label = { Text("Firebase Auth Web API Key") },
+                        placeholder = { Text("AIzaSy...") },
+                        readOnly = userRole != UserRole.ADMIN,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // Auto-sync toggle
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1.0f)) {
+                            Text("Auto-Sync on Mutation", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Text("Instantly upload new reports, check-ins, or equipment changes", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                        Switch(
+                            checked = isAutoSyncEnabled,
+                            onCheckedChange = { if (userRole == UserRole.ADMIN) viewModel.toggleAutoSync(it) },
+                            enabled = userRole == UserRole.ADMIN
+                        )
+                    }
+
+                    // Sync buttons
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                viewModel.triggerSync()
+                                Toast.makeText(viewModel.getApplication(), "Triggered cloud synchronization", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Sync, contentDescription = "Sync now")
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Sync Now")
+                        }
+                    }
+
+                    // Sync logs expander
+                    var showLogs by remember { mutableStateOf(false) }
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showLogs = !showLogs }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Real-Time Synchronization Logs (${syncLogs.size})", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Icon(
+                                imageVector = if (showLogs) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        if (showLogs) {
+                            Card(
+                                shape = RoundedCornerShape(8.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(150.dp)
+                                    .padding(top = 4.dp)
+                            ) {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    if (syncLogs.isEmpty()) {
+                                        item {
+                                            Text("No synchronization logs captured yet.", style = MaterialTheme.typography.bodySmall, color = Color.Gray, modifier = Modifier.padding(8.dp))
+                                        }
+                                    } else {
+                                        items(syncLogs) { log ->
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text(log.timestamp, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = Color.Gray)
+                                                Text(
+                                                    text = log.message,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = if (log.isError) Color.Red else MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalPermissionsApi::class)
+@Composable
+fun QrCodeCameraScanner(
+    viewModel: CemvaViewModel,
+    membersList: List<MemberEntity>,
+    operationsList: List<OperationEntity>,
+    onClose: () -> Unit
+) {
+    val cameraPermissionState = rememberPermissionState(android.Manifest.permission.CAMERA)
+
+    if (cameraPermissionState.status.isGranted) {
+        CameraScannerView(
+            viewModel = viewModel,
+            membersList = membersList,
+            operationsList = operationsList,
+            onClose = onClose
+        )
+    } else {
+        CameraPermissionRequestView(
+            onRequestPermission = { cameraPermissionState.launchPermissionRequest() },
+            onClose = onClose
+        )
+    }
+}
+
+@Composable
+fun CameraPermissionRequestView(
+    onRequestPermission: () -> Unit,
+    onClose: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp)
+            .background(MaterialTheme.colorScheme.background),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .size(100.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.CameraAlt,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(48.dp)
+            )
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+        Text(
+            text = "Camera Permission Required",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "CEMVA needs access to your device camera to scan member digital ID QR codes and automatically validate their attendance against active duty rosters.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+            textAlign = TextAlign.Center
+        )
+        Spacer(modifier = Modifier.height(32.dp))
+        Button(
+            onClick = onRequestPermission,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Grant Camera Permission")
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+        TextButton(
+            onClick = onClose,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Go Back")
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CameraScannerView(
+    viewModel: CemvaViewModel,
+    membersList: List<MemberEntity>,
+    operationsList: List<OperationEntity>,
+    onClose: () -> Unit
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    // Filter operations to show duty rosters or deployments
+    val activeDutyRosters = remember(operationsList) {
+        operationsList.filter { it.type == "Duty Roster" || it.type == "Deployment" || it.type == "Event Standby" }
+            .ifEmpty { operationsList }
+    }
+
+    var selectedOperation by remember {
+        mutableStateOf(activeDutyRosters.find { it.status == "Active" } ?: activeDutyRosters.firstOrNull())
+    }
+
+    var isDropdownExpanded by remember { mutableStateOf(false) }
+
+    // Scan result states
+    var scannedResult by remember { mutableStateOf<String?>(null) }
+    var scannedMember by remember { mutableStateOf<MemberEntity?>(null) }
+    var isValidated by remember { mutableStateOf(false) }
+    var validationMessage by remember { mutableStateOf("") }
+    var showValidationCard by remember { mutableStateOf(false) }
+    var isProcessing by remember { mutableStateOf(false) }
+
+    // Logging type states
+    var attType by remember { mutableStateOf("Check-In") }
+    var attActivity by remember { mutableStateOf("Duty") }
+
+    val cameraExecutor = remember { java.util.concurrent.Executors.newSingleThreadExecutor() }
+
+    // Infinite scanning animation
+    val infiniteTransition = rememberInfiniteTransition(label = "LaserTransition")
+    val scanLineY by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "LaserAnimation"
+    )
+
+    fun handleQrScan(rawValue: String) {
+        val matchedMember = membersList.find { it.qrCodeToken == rawValue || it.id == rawValue }
+        scannedResult = rawValue
+        if (matchedMember != null) {
+            scannedMember = matchedMember
+            val op = selectedOperation
+            if (op != null) {
+                // Validate if assigned to active duty roster
+                val isAssigned = op.assignedPersonnel.contains(matchedMember.name, ignoreCase = true) ||
+                        op.assignedPersonnel.contains(matchedMember.id, ignoreCase = true)
+                isValidated = isAssigned
+                attActivity = when (op.type) {
+                    "Duty Roster" -> "Duty"
+                    "Training" -> "Training"
+                    else -> "Deployment"
+                }
+                validationMessage = if (isAssigned) {
+                    "Volunteer is scheduled on this Duty Roster operation: \"${op.title}\"."
+                } else {
+                    "NOT ON ROSTER: Volunteer \"${matchedMember.name}\" is not scheduled on \"${op.title}\"."
+                }
+            } else {
+                isValidated = true
+                attActivity = "Duty"
+                validationMessage = "Verified as active CEMVA Member. (No specific operations roster selected)"
+            }
+        } else {
+            scannedMember = null
+            isValidated = false
+            validationMessage = "INVALID CODE: Scanned ID \"$rawValue\" does not match any registered CEMVA members."
+        }
+        showValidationCard = true
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Live camera preview layer
+        AndroidView(
+            factory = { ctx ->
+                val previewView = PreviewView(ctx).apply {
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                }
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                cameraProviderFuture.addListener({
+                    val cameraProvider = cameraProviderFuture.get()
+                    val preview = Preview.Builder().build().apply {
+                        setSurfaceProvider(previewView.surfaceProvider)
+                    }
+
+                    val barcodeScanner = BarcodeScanning.getClient()
+
+                    val imageAnalysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+
+                    imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                        @androidx.annotation.OptIn(androidx.camera.core.ExperimentalGetImage::class)
+                        val mediaImage = imageProxy.image
+                        if (mediaImage != null && !isProcessing) {
+                            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+                            barcodeScanner.process(image)
+                                .addOnSuccessListener { barcodes ->
+                                    if (barcodes.isNotEmpty() && !isProcessing) {
+                                        val rawValue = barcodes.first().rawValue
+                                        if (rawValue != null) {
+                                            isProcessing = true
+                                            // Post handling back to main thread
+                                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                                handleQrScan(rawValue)
+                                            }
+                                        }
+                                    }
+                                }
+                                .addOnCompleteListener {
+                                    imageProxy.close()
+                                }
+                        } else {
+                            imageProxy.close()
+                        }
+                    }
+
+                    try {
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(
+                            lifecycleOwner,
+                            CameraSelector.DEFAULT_BACK_CAMERA,
+                            preview,
+                            imageAnalysis
+                        )
+                    } catch (e: Exception) {
+                        android.util.Log.e("CameraScannerView", "Error binding camera use cases", e)
+                    }
+                }, androidx.core.content.ContextCompat.getMainExecutor(ctx))
+                previewView
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // Shading Overlay & Custom Scan Target Reticle with pulsing Laser line
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val canvasWidth = size.width
+            val canvasHeight = size.height
+            val boxSize = canvasWidth * 0.7f
+            val left = (canvasWidth - boxSize) / 2
+            val top = (canvasHeight - boxSize) / 2
+            val right = left + boxSize
+            val bottom = top + boxSize
+
+            // 1. Draw darkened boundary masks (top, bottom, left, right)
+            drawRect(color = Color.Black.copy(alpha = 0.5f), size = Size(canvasWidth, top))
+            drawRect(
+                color = Color.Black.copy(alpha = 0.5f),
+                topLeft = Offset(0f, bottom),
+                size = Size(canvasWidth, canvasHeight - bottom)
+            )
+            drawRect(
+                color = Color.Black.copy(alpha = 0.5f),
+                topLeft = Offset(0f, top),
+                size = Size(left, boxSize)
+            )
+            drawRect(
+                color = Color.Black.copy(alpha = 0.5f),
+                topLeft = Offset(right, top),
+                size = Size(canvasWidth - right, boxSize)
+            )
+
+            // 2. Draw border frame corners (Neon green)
+            val cornerLength = 32.dp.toPx()
+            val strokeWidth = 4.dp.toPx()
+            val neonGreen = Color(0xFF10B981)
+
+            // Top-Left corner
+            drawLine(neonGreen, Offset(left, top), Offset(left + cornerLength, top), strokeWidth)
+            drawLine(neonGreen, Offset(left, top), Offset(left, top + cornerLength), strokeWidth)
+
+            // Top-Right corner
+            drawLine(neonGreen, Offset(right, top), Offset(right - cornerLength, top), strokeWidth)
+            drawLine(neonGreen, Offset(right, top), Offset(right, top + cornerLength), strokeWidth)
+
+            // Bottom-Left corner
+            drawLine(neonGreen, Offset(left, bottom), Offset(left + cornerLength, bottom), strokeWidth)
+            drawLine(neonGreen, Offset(left, bottom), Offset(left, bottom - cornerLength), strokeWidth)
+
+            // Bottom-Right corner
+            drawLine(neonGreen, Offset(right, bottom), Offset(right - cornerLength, bottom), strokeWidth)
+            drawLine(neonGreen, Offset(right, bottom), Offset(right, bottom - cornerLength), strokeWidth)
+
+            // 3. Draw moving Laser Scanning Line
+            val laserY = top + (boxSize * scanLineY)
+            drawLine(
+                color = neonGreen.copy(alpha = 0.8f),
+                start = Offset(left + 8.dp.toPx(), laserY),
+                end = Offset(right - 8.dp.toPx(), laserY),
+                strokeWidth = 3.dp.toPx()
+            )
+        }
+
+        // Top Floating Control Bar: Target Operation Duty Roster Selector & Close Button
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 40.dp, start = 16.dp, end = 16.dp)
+                .align(Alignment.TopCenter),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Back/Close Button
+                IconButton(
+                    onClick = {
+                        cameraExecutor.shutdown()
+                        onClose()
+                    },
+                    colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.6f))
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Close", tint = Color.White)
+                }
+
+                Text(
+                    text = "QR Duty Scanner",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                        .padding(horizontal = 16.dp, vertical = 6.dp)
+                )
+            }
+
+            // Interactive Selector Box
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.75f)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = "Target Duty Roster / Operations:",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { isDropdownExpanded = true },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = selectedOperation?.title ?: "Select Operation...",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = if (isDropdownExpanded) Icons.Default.ArrowDropUp else Icons.Default.ArrowDropDown,
+                            contentDescription = null,
+                            tint = Color.White
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = isDropdownExpanded,
+                        onDismissRequest = { isDropdownExpanded = false },
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.surface)
+                            .fillMaxWidth(0.9f)
+                    ) {
+                        activeDutyRosters.forEach { op ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(op.title, fontWeight = FontWeight.Bold)
+                                        Text("${op.type} • ${op.date} • ${op.location}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                    }
+                                },
+                                onClick = {
+                                    selectedOperation = op
+                                    isDropdownExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Live validation results floating card (Overlayed at bottom)
+        AnimatedVisibility(
+            visible = showValidationCard,
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(16.dp)
+                .navigationBarsPadding()
+        ) {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Header Banner (Verified Success or Access Warning)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (scannedMember != null && isValidated) Color(0xFFD1FAE5) else Color(0xFFFEE2E2)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (scannedMember != null && isValidated) Icons.Default.CheckCircle else Icons.Default.Error,
+                                contentDescription = null,
+                                tint = if (scannedMember != null && isValidated) Color(0xFF10B981) else Color(0xFFEF4444),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+
+                        Column {
+                            Text(
+                                text = if (scannedMember != null && isValidated) "ACCESS GRANTED" else "VALIDATION ALERT",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = if (scannedMember != null && isValidated) Color(0xFF047857) else Color(0xFFB91C1C)
+                            )
+                            Text(
+                                text = if (scannedMember != null && isValidated) "Assigned to Duty" else "Roster Check Failed",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray
+                            )
+                        }
+                    }
+
+                    HorizontalDivider()
+
+                    // Detailed verification feedback
+                    Text(
+                        text = validationMessage,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    scannedMember?.let { member ->
+                        // Display verified volunteer information card
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(40.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = member.name.take(1).uppercase(),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Column {
+                                    Text(member.name, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodyMedium)
+                                    Text("${member.position} • ID: ${member.id}", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
+                            }
+                        }
+
+                        // Logging Option Selectors (Check-In or Check-Out chips)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("Check-In", "Check-Out").forEach { type ->
+                                FilterChip(
+                                    selected = attType == type,
+                                    onClick = { attType = type },
+                                    label = { Text(type, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+
+                    // Bottom Buttons (Action & Cancel)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Dismiss/Scan again button
+                        OutlinedButton(
+                            onClick = {
+                                scannedResult = null
+                                scannedMember = null
+                                showValidationCard = false
+                                isProcessing = false
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Retry Scan")
+                        }
+
+                        scannedMember?.let { member ->
+                            // Confirm save button
+                            Button(
+                                onClick = {
+                                    viewModel.recordAttendance(
+                                        memberId = member.id,
+                                        memberName = member.name,
+                                        type = attType,
+                                        activity = attActivity,
+                                        method = "QR Code"
+                                    )
+                                    scannedResult = null
+                                    scannedMember = null
+                                    showValidationCard = false
+                                    isProcessing = false
+                                    Toast.makeText(context, "Attendance logged securely: ${member.name}", Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text(if (isValidated) "Log Attendance" else "Bypass & Log")
+                            }
+                        }
+                    }
                 }
             }
         }

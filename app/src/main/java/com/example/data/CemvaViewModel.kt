@@ -1,6 +1,7 @@
 package com.example.data
 
 import android.app.Application
+import android.util.Log
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -32,7 +33,8 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
         trainingDao = database.trainingDao(),
         equipmentDao = database.equipmentDao(),
         announcementDao = database.announcementDao(),
-        attendanceDao = database.attendanceDao()
+        attendanceDao = database.attendanceDao(),
+        userAccountDao = database.userAccountDao()
     )
 
     // Current navigation screen
@@ -68,6 +70,44 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
     val attendance: StateFlow<List<AttendanceRecordEntity>> = repository.allAttendance
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val userAccounts: StateFlow<List<UserAccountEntity>> = repository.allUserAccounts
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Real-time Cloud Sync integration
+    val syncManager = CemvaSyncManager.getInstance(application)
+    val syncStatus: StateFlow<SyncStatus> = syncManager.syncStatus
+    val lastSyncTime: StateFlow<String?> = syncManager.lastSyncTime
+    val syncLogs: StateFlow<List<SyncLog>> = syncManager.syncLogs
+    val firebaseDbUrl: StateFlow<String> = syncManager.firebaseDbUrl
+    val isAutoSyncEnabled: StateFlow<Boolean> = syncManager.isAutoSyncEnabled
+
+    // Firebase Authentication Integration
+    val authManager = CemvaAuthManager.getInstance(application)
+    val firebaseWebApiKey: StateFlow<String> = authManager.webApiKey
+    val isFirebaseAuthenticated: StateFlow<Boolean> = authManager.isAuthenticated
+    val firebaseAuthStatusMessage: StateFlow<String?> = authManager.authStatusMessage
+
+    fun updateFirebaseUrl(url: String) {
+        syncManager.firebaseDbUrl.value = url
+    }
+
+    fun updateWebApiKey(key: String) {
+        authManager.updateWebApiKey(key)
+    }
+
+    fun toggleAutoSync(enabled: Boolean) {
+        syncManager.isAutoSyncEnabled.value = enabled
+    }
+
+    fun triggerSync() {
+        if (isAutoSyncEnabled.value) {
+            viewModelScope.launch {
+                syncManager.performFullSync()
+            }
+        }
+    }
+
+
     // Search Query State
     var memberSearchQuery = mutableStateOf("")
     var equipmentSearchQuery = mutableStateOf("")
@@ -97,42 +137,193 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Google Sign-In Simulation
+    // Real login querying from local Room database with sync trigger and Firebase Auth integration
+    suspend fun login(email: String, password: String): Boolean {
+        val apiKey = firebaseWebApiKey.value.trim()
+        var firebaseSuccess = false
+        
+        if (apiKey.isNotEmpty()) {
+            val authResult = authManager.signIn(email, password)
+            if (authResult is FirebaseAuthResult.Success) {
+                firebaseSuccess = true
+            } else if (authResult is FirebaseAuthResult.Error) {
+                Log.d("CemvaViewModel", "Firebase Auth Sign In failed: ${authResult.message}")
+            }
+        }
+
+        val account = repository.getUserAccountByEmail(email)
+        
+        if (firebaseSuccess) {
+            // Log in successfully with Firebase Auth!
+            if (account != null) {
+                currentUserEmail.value = account.email
+                currentUserRole.value = when (account.role) {
+                    "ADMIN" -> UserRole.ADMIN
+                    "MEMBER" -> UserRole.MEMBER
+                    else -> UserRole.GUEST
+                }
+                currentUserId.value = account.memberId
+                selectedMemberId.value = account.memberId
+            } else {
+                // Auto-provision a new local account if it's in the cloud but not locally yet
+                val randomSuffix = (1000..9999).random()
+                val newId = "CEMVA-2026-$randomSuffix"
+                val roleStr = if (email.contains("admin") || email == "carloskristian258@gmail.com") "ADMIN" else "MEMBER"
+                
+                val newAccount = UserAccountEntity(
+                    email = email,
+                    passwordHash = password,
+                    name = email.substringBefore("@").replaceFirstChar { it.uppercase() },
+                    phone = "",
+                    role = roleStr,
+                    memberId = newId,
+                    isApproved = true
+                )
+                repository.insertUserAccount(newAccount)
+                
+                val newMember = MemberEntity(
+                    id = newId,
+                    name = email.substringBefore("@").replaceFirstChar { it.uppercase() },
+                    status = "Active",
+                    position = if (roleStr == "ADMIN") "Rescue Officer" else "Volunteer",
+                    department = "Operations",
+                    email = email,
+                    phone = "",
+                    qrCodeToken = "M-CEMVA-$randomSuffix",
+                    joinedDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date()),
+                    isApproved = true
+                )
+                repository.insertMember(newMember)
+                
+                currentUserEmail.value = email
+                currentUserRole.value = if (roleStr == "ADMIN") UserRole.ADMIN else UserRole.MEMBER
+                currentUserId.value = newId
+                selectedMemberId.value = newId
+            }
+            triggerSync()
+            return true
+        } else {
+            // Local fallback (offline support)
+            if (account != null && account.passwordHash == password) {
+                currentUserEmail.value = account.email
+                currentUserRole.value = when (account.role) {
+                    "ADMIN" -> UserRole.ADMIN
+                    "MEMBER" -> UserRole.MEMBER
+                    else -> UserRole.GUEST
+                }
+                currentUserId.value = account.memberId
+                selectedMemberId.value = account.memberId
+                triggerSync()
+                return true
+            }
+        }
+        return false
+    }
+
+    // Real signup/registration storing user in local database & auto syncing to cloud!
+    suspend fun register(email: String, password: String, name: String, phone: String, requestedRole: String): Boolean {
+        val existing = repository.getUserAccountByEmail(email)
+        if (existing != null) return false // Already exists
+
+        val apiKey = firebaseWebApiKey.value.trim()
+        if (apiKey.isNotEmpty()) {
+            val authResult = authManager.signUp(email, password)
+            if (authResult is FirebaseAuthResult.Error) {
+                Log.e("CemvaViewModel", "Firebase Registration Failed: ${authResult.message}")
+                return false
+            }
+        }
+
+        // Generate a new member ID
+        val randomSuffix = (1000..9999).random()
+        val newId = "CEMVA-2026-$randomSuffix"
+
+        // Guests don't need approval, members/admins start as unapproved until approved
+        val isApproved = (requestedRole == "GUEST")
+
+        val newAccount = UserAccountEntity(
+            email = email,
+            passwordHash = password,
+            name = name,
+            phone = phone,
+            role = requestedRole,
+            memberId = newId,
+            isApproved = isApproved
+        )
+        repository.insertUserAccount(newAccount)
+
+        val newMember = MemberEntity(
+            id = newId,
+            name = name,
+            status = if (isApproved) "Active" else "Applicant",
+            position = when (requestedRole) {
+                "ADMIN" -> "Rescue Officer"
+                "MEMBER" -> "Volunteer"
+                else -> "Volunteer"
+            },
+            department = "Operations",
+            email = email,
+            phone = phone,
+            qrCodeToken = "M-CEMVA-$randomSuffix",
+            joinedDate = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date()),
+            isApproved = isApproved
+        )
+        repository.insertMember(newMember)
+
+        triggerSync()
+        return true
+    }
+
+    // Sign in as a specific user (admin bypass/simulation helper)
     fun signInAs(email: String, role: UserRole, memberId: String) {
         currentUserEmail.value = email
         currentUserRole.value = role
         currentUserId.value = memberId
         selectedMemberId.value = memberId
+        triggerSync()
     }
 
     fun logout() {
         currentUserEmail.value = "guest@cemva.org"
         currentUserRole.value = UserRole.GUEST
         currentUserId.value = ""
+        authManager.logout()
     }
+
 
     // Member Operations
     fun addMember(member: MemberEntity) {
         viewModelScope.launch {
             repository.insertMember(member)
+            triggerSync()
         }
     }
 
     fun updateMember(member: MemberEntity) {
         viewModelScope.launch {
             repository.updateMember(member)
+            triggerSync()
         }
     }
 
     fun deleteMember(member: MemberEntity) {
         viewModelScope.launch {
             repository.deleteMember(member)
+            triggerSync()
         }
     }
 
     fun approveMember(member: MemberEntity) {
         viewModelScope.launch {
             repository.updateMember(member.copy(isApproved = true, status = "Active"))
+            
+            // Also approve user account associated with this email
+            val accounts = repository.allUserAccounts.first()
+            val associatedAccount = accounts.find { it.memberId == member.id }
+            if (associatedAccount != null) {
+                repository.insertUserAccount(associatedAccount.copy(isApproved = true))
+            }
+            triggerSync()
         }
     }
 
@@ -140,18 +331,21 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
     fun addOperation(operation: OperationEntity) {
         viewModelScope.launch {
             repository.insertOperation(operation)
+            triggerSync()
         }
     }
 
     fun updateOperation(operation: OperationEntity) {
         viewModelScope.launch {
             repository.updateOperation(operation)
+            triggerSync()
         }
     }
 
     fun deleteOperation(operation: OperationEntity) {
         viewModelScope.launch {
             repository.deleteOperation(operation)
+            triggerSync()
         }
     }
 
@@ -159,12 +353,14 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
     fun addReport(report: ReportEntity) {
         viewModelScope.launch {
             repository.insertReport(report)
+            triggerSync()
         }
     }
 
     fun deleteReport(report: ReportEntity) {
         viewModelScope.launch {
             repository.deleteReport(report)
+            triggerSync()
         }
     }
 
@@ -172,18 +368,21 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
     fun addTraining(training: TrainingEntity) {
         viewModelScope.launch {
             repository.insertTraining(training)
+            triggerSync()
         }
     }
 
     fun updateTraining(training: TrainingEntity) {
         viewModelScope.launch {
             repository.updateTraining(training)
+            triggerSync()
         }
     }
 
     fun deleteTraining(training: TrainingEntity) {
         viewModelScope.launch {
             repository.deleteTraining(training)
+            triggerSync()
         }
     }
 
@@ -191,18 +390,21 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
     fun addEquipment(eq: EquipmentEntity) {
         viewModelScope.launch {
             repository.insertEquipment(eq)
+            triggerSync()
         }
     }
 
     fun updateEquipment(eq: EquipmentEntity) {
         viewModelScope.launch {
             repository.updateEquipment(eq)
+            triggerSync()
         }
     }
 
     fun deleteEquipment(eq: EquipmentEntity) {
         viewModelScope.launch {
             repository.deleteEquipment(eq)
+            triggerSync()
         }
     }
 
@@ -217,6 +419,7 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
                     checkoutDate = "2026-07-05 10:00 AM"
                 )
                 repository.updateEquipment(updated)
+                triggerSync()
             }
         }
     }
@@ -230,6 +433,7 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
                 checkoutDate = ""
             )
             repository.updateEquipment(updated)
+            triggerSync()
         }
     }
 
@@ -237,12 +441,14 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
     fun addAnnouncement(ann: AnnouncementEntity) {
         viewModelScope.launch {
             repository.insertAnnouncement(ann)
+            triggerSync()
         }
     }
 
     fun deleteAnnouncement(ann: AnnouncementEntity) {
         viewModelScope.launch {
             repository.deleteAnnouncement(ann)
+            triggerSync()
         }
     }
 
@@ -263,8 +469,10 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
                     activity = activity
                 )
             )
+            triggerSync()
         }
     }
+
 
     // QR Verification logic
     fun verifyQrToken(token: String) {

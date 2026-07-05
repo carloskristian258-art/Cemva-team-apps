@@ -88,3 +88,15 @@ data class AttendanceRecordEntity(
     val method: String,            // "QR Code", "Manual"
     val activity: String           // "Duty", "Training", "Deployment"
 )
+
+@Entity(tableName = "user_accounts")
+data class UserAccountEntity(
+    @PrimaryKey val email: String,
+    val passwordHash: String,
+    val name: String,
+    val phone: String,
+    val role: String,              // "GUEST", "MEMBER", "ADMIN"
+    val memberId: String,          // Matches MemberEntity.id
+    val isApproved: Boolean = false
+)
+

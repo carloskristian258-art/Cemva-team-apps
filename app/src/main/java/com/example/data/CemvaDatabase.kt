@@ -13,9 +13,10 @@ import androidx.room.RoomDatabase
         TrainingEntity::class,
         EquipmentEntity::class,
         AnnouncementEntity::class,
-        AttendanceRecordEntity::class
+        AttendanceRecordEntity::class,
+        UserAccountEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class CemvaDatabase : RoomDatabase() {
@@ -26,6 +27,7 @@ abstract class CemvaDatabase : RoomDatabase() {
     abstract fun equipmentDao(): EquipmentDao
     abstract fun announcementDao(): AnnouncementDao
     abstract fun attendanceDao(): AttendanceDao
+    abstract fun userAccountDao(): UserAccountDao
 
     companion object {
         @Volatile
