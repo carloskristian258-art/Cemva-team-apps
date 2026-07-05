@@ -1,0 +1,65 @@
+name: CEMVA Android CI/CD
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "main", "master" ]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build & Release Android App
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Grant Execute Permission to Gradlew
+        run: chmod +x gradlew
+
+      - name: Run Build (Compile APKs)
+        run: ./gradlew assembleDebug
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cemva-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/debug/app-debug.apk
+          name: CEMVA Release ${{ github.ref_name }}
+          body: |
+            ## Cavite Emergency Medical Volunteers Association (CEMVA)
+            
+            Welcome to the official release of the CEMVA Android App!
+            
+            ### 📦 Download Instructions
+            Download the **`app-debug.apk`** below and install it directly on your physical Android device.
+            
+            ### 🛠️ Key Release Features
+            * **Live Camera QR Duty Validator**: Real-time camera scanner using Jetpack CameraX and ML Kit Barcode Scanning to validate volunteers.
+            * **Active Operations Sync**: Secure lookup of operational schedules, training courses, and emergency rosters.
+            * **Offline-First Room DB**: Fully operational without network coverage, automatically syncing to the cloud when online.
+            * **Accessibility Compliance**: Touch targets and dynamic colors styled to Material Design 3 (M3).
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
