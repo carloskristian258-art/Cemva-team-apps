@@ -100,3 +100,42 @@ data class UserAccountEntity(
     val isApproved: Boolean = false
 )
 
+@Entity(tableName = "emergency_reports")
+data class EmergencyReportEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val reporterName: String,
+    val type: String,              // "Medical", "Fire", "Rescue", "Other"
+    val timestamp: Long,
+    val date: String,
+    val time: String,
+    val latitude: Double,
+    val longitude: Double,
+    val locationDescription: String,
+    val details: String,
+    val status: String = "Open"    // "Open", "Responding", "Resolved"
+)
+
+@Entity(tableName = "emergency_alerts")
+data class EmergencyAlertEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val title: String,
+    val message: String,
+    val timestamp: Long,
+    val priority: String,          // "Emergency", "High", "Normal"
+    val sender: String
+)
+
+@Entity(tableName = "status_logs")
+data class StatusLogEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val memberId: String,
+    val memberName: String,
+    val oldStatus: String,
+    val newStatus: String,
+    val timestamp: Long,
+    val date: String,
+    val time: String,
+    val officerNotes: String,
+    val updatedBy: String
+)
+

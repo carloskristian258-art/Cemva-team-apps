@@ -11,7 +11,11 @@ class CemvaRepository(
     private val equipmentDao: EquipmentDao,
     private val announcementDao: AnnouncementDao,
     private val attendanceDao: AttendanceDao,
-    private val userAccountDao: UserAccountDao
+    private val userAccountDao: UserAccountDao,
+    private val statusLogDao: StatusLogDao,
+    private val emergencyReportDao: EmergencyReportDao,
+    private val emergencyAlertDao: EmergencyAlertDao,
+    private val reminderDao: ReminderDao
 ) {
     val allMembers: Flow<List<MemberEntity>> = memberDao.getAllMembers()
     val allOperations: Flow<List<OperationEntity>> = operationDao.getAllOperations()
@@ -21,6 +25,26 @@ class CemvaRepository(
     val allAnnouncements: Flow<List<AnnouncementEntity>> = announcementDao.getAllAnnouncements()
     val allAttendance: Flow<List<AttendanceRecordEntity>> = attendanceDao.getAllAttendance()
     val allUserAccounts: Flow<List<UserAccountEntity>> = userAccountDao.getAllUserAccounts()
+    val allStatusLogs: Flow<List<StatusLogEntity>> = statusLogDao.getAllStatusLogs()
+    val allEmergencyReports: Flow<List<EmergencyReportEntity>> = emergencyReportDao.getAllEmergencyReports()
+    val allEmergencyAlerts: Flow<List<EmergencyAlertEntity>> = emergencyAlertDao.getAllEmergencyAlerts()
+    val allReminders: Flow<List<ReminderEntity>> = reminderDao.getAllReminders()
+
+    fun getLogsByMemberId(memberId: String): Flow<List<StatusLogEntity>> = statusLogDao.getLogsByMemberId(memberId)
+
+    suspend fun insertStatusLog(log: StatusLogEntity) = statusLogDao.insertStatusLog(log)
+
+    suspend fun insertEmergencyReport(report: EmergencyReportEntity) = emergencyReportDao.insertEmergencyReport(report)
+    suspend fun updateEmergencyReport(report: EmergencyReportEntity) = emergencyReportDao.updateEmergencyReport(report)
+    suspend fun deleteEmergencyReport(report: EmergencyReportEntity) = emergencyReportDao.deleteEmergencyReport(report)
+
+    suspend fun insertEmergencyAlert(alert: EmergencyAlertEntity) = emergencyAlertDao.insertEmergencyAlert(alert)
+    suspend fun deleteEmergencyAlert(alert: EmergencyAlertEntity) = emergencyAlertDao.deleteEmergencyAlert(alert)
+
+    suspend fun insertReminder(reminder: ReminderEntity) = reminderDao.insertReminder(reminder)
+    suspend fun updateReminder(reminder: ReminderEntity) = reminderDao.updateReminder(reminder)
+    suspend fun deleteReminder(reminder: ReminderEntity) = reminderDao.deleteReminder(reminder)
+    suspend fun clearCompletedReminders() = reminderDao.clearCompletedReminders()
 
     suspend fun getMemberById(id: String): MemberEntity? = memberDao.getMemberById(id)
     suspend fun getUserAccountByEmail(email: String): UserAccountEntity? = userAccountDao.getUserAccountByEmail(email)
@@ -315,6 +339,26 @@ class CemvaRepository(
                     role = "MEMBER",
                     memberId = "CEMVA-2026-003",
                     isApproved = true
+                )
+            )
+
+            // 9. Prepopulate Reminders
+            reminderDao.insertReminder(
+                ReminderEntity(
+                    title = "Equipment Maintenance",
+                    description = "Monthly check of all medical kits and radio batteries.",
+                    dateTime = "2026-07-10 09:00",
+                    priority = "High",
+                    category = "Admin"
+                )
+            )
+            reminderDao.insertReminder(
+                ReminderEntity(
+                    title = "Skill Audit Submission",
+                    description = "Submit your updated skills checklist for Q3 validation.",
+                    dateTime = "2026-07-15 17:00",
+                    priority = "Normal",
+                    category = "Training"
                 )
             )
         }

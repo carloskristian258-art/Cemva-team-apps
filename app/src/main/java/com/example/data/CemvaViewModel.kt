@@ -5,8 +5,12 @@ import android.util.Log
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 enum class UserRole {
     GUEST,     // Applicant level: view-only basic, can apply
@@ -34,7 +38,11 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
         equipmentDao = database.equipmentDao(),
         announcementDao = database.announcementDao(),
         attendanceDao = database.attendanceDao(),
-        userAccountDao = database.userAccountDao()
+        userAccountDao = database.userAccountDao(),
+        statusLogDao = database.statusLogDao(),
+        emergencyReportDao = database.emergencyReportDao(),
+        emergencyAlertDao = database.emergencyAlertDao(),
+        reminderDao = database.reminderDao()
     )
 
     // Current navigation screen
@@ -47,6 +55,12 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
     
     // Google Integration URLs
     var googleUrls = mutableStateOf(GoogleIntegrationUrls())
+
+    // Location State
+    private val fusedLocationClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(application)
+    var lastKnownLatitude = mutableStateOf(14.4100) // Default to Cavite area
+    var lastKnownLongitude = mutableStateOf(120.9400)
+    var isFetchingLocation = mutableStateOf(false)
 
     // Live Database Flows
     val members: StateFlow<List<MemberEntity>> = repository.allMembers
@@ -71,6 +85,18 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val userAccounts: StateFlow<List<UserAccountEntity>> = repository.allUserAccounts
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val statusLogs: StateFlow<List<StatusLogEntity>> = repository.allStatusLogs
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val emergencyReports: StateFlow<List<EmergencyReportEntity>> = repository.allEmergencyReports
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val emergencyAlerts: StateFlow<List<EmergencyAlertEntity>> = repository.allEmergencyAlerts
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val reminders: StateFlow<List<ReminderEntity>> = repository.allReminders
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     // Real-time Cloud Sync integration
@@ -452,6 +478,71 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Emergency Operations
+    fun addEmergencyReport(report: EmergencyReportEntity) {
+        viewModelScope.launch {
+            repository.insertEmergencyReport(report)
+            triggerSync()
+        }
+    }
+
+    fun updateEmergencyReport(report: EmergencyReportEntity) {
+        viewModelScope.launch {
+            repository.updateEmergencyReport(report)
+            triggerSync()
+        }
+    }
+
+    fun deleteEmergencyReport(report: EmergencyReportEntity) {
+        viewModelScope.launch {
+            repository.deleteEmergencyReport(report)
+            triggerSync()
+        }
+    }
+
+    fun addEmergencyAlert(alert: EmergencyAlertEntity) {
+        viewModelScope.launch {
+            repository.insertEmergencyAlert(alert)
+            triggerSync()
+        }
+    }
+
+    fun deleteEmergencyAlert(alert: EmergencyAlertEntity) {
+        viewModelScope.launch {
+            repository.deleteEmergencyAlert(alert)
+            triggerSync()
+        }
+    }
+
+    // Reminder Operations
+    fun addReminder(reminder: ReminderEntity) {
+        viewModelScope.launch {
+            repository.insertReminder(reminder)
+            triggerSync()
+        }
+    }
+
+    fun updateReminder(reminder: ReminderEntity) {
+        viewModelScope.launch {
+            repository.updateReminder(reminder)
+            triggerSync()
+        }
+    }
+
+    fun deleteReminder(reminder: ReminderEntity) {
+        viewModelScope.launch {
+            repository.deleteReminder(reminder)
+            triggerSync()
+        }
+    }
+
+    fun clearCompletedReminders() {
+        viewModelScope.launch {
+            repository.clearCompletedReminders()
+            triggerSync()
+        }
+    }
+
     // Attendance Operations
     fun recordAttendance(memberId: String, memberName: String, type: String, activity: String, method: String = "QR Code") {
         viewModelScope.launch {
@@ -469,6 +560,43 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
                     activity = activity
                 )
             )
+            triggerSync()
+        }
+    }
+
+    fun recordStatusUpdate(
+        memberId: String,
+        memberName: String,
+        oldStatus: String,
+        newStatus: String,
+        notes: String,
+        updatedBy: String
+    ) {
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+            val dateTime = sdf.format(java.util.Date(now))
+            val date = dateTime.substringBefore(" ")
+            val time = dateTime.substringAfter(" ")
+
+            val log = StatusLogEntity(
+                memberId = memberId,
+                memberName = memberName,
+                oldStatus = oldStatus,
+                newStatus = newStatus,
+                timestamp = now,
+                date = date,
+                time = time,
+                officerNotes = notes,
+                updatedBy = updatedBy
+            )
+            repository.insertStatusLog(log)
+
+            // Also update the member entity status if it's different
+            val member = repository.getMemberById(memberId)
+            if (member != null && member.status != newStatus) {
+                repository.updateMember(member.copy(status = newStatus))
+            }
             triggerSync()
         }
     }
@@ -508,5 +636,27 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
     // Update URLs
     fun updateGoogleUrls(urls: GoogleIntegrationUrls) {
         googleUrls.value = urls
+    }
+
+    suspend fun getCurrentLocation(): Pair<Double, Double>? {
+        isFetchingLocation.value = true
+        return try {
+            val location = fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null).await()
+            if (location != null) {
+                lastKnownLatitude.value = location.latitude
+                lastKnownLongitude.value = location.longitude
+                Pair(location.latitude, location.longitude)
+            } else {
+                null
+            }
+        } catch (e: SecurityException) {
+            Log.e("CemvaViewModel", "Location permission denied", e)
+            null
+        } catch (e: Exception) {
+            Log.e("CemvaViewModel", "Error getting location", e)
+            null
+        } finally {
+            isFetchingLocation.value = false
+        }
     }
 }

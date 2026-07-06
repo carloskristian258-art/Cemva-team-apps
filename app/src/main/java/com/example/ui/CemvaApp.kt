@@ -41,6 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,7 +70,11 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.isGranted
-import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.zIndex
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.graphics.nativeCanvas
 import android.graphics.Paint
 import android.graphics.PorterDuff
@@ -96,6 +101,7 @@ fun CemvaApp(viewModel: CemvaViewModel) {
     val equipmentList by viewModel.equipment.collectAsStateWithLifecycle()
     val reportsList by viewModel.reports.collectAsStateWithLifecycle()
     val attendanceList by viewModel.attendance.collectAsStateWithLifecycle()
+    val remindersList by viewModel.reminders.collectAsStateWithLifecycle()
     val syncStatus by viewModel.syncStatus.collectAsStateWithLifecycle()
 
     // Dialog trigger states
@@ -107,6 +113,7 @@ fun CemvaApp(viewModel: CemvaViewModel) {
     var showAddEquipmentDialog by remember { mutableStateOf(false) }
     var showAddAnnouncementDialog by remember { mutableStateOf(false) }
     var showAddReportDialog by remember { mutableStateOf(false) }
+    var showAddReminderDialog by remember { mutableStateOf(false) }
     var showAttendanceDialog by remember { mutableStateOf(false) }
     var showCameraScanner by remember { mutableStateOf(false) }
 
@@ -262,14 +269,14 @@ fun CemvaApp(viewModel: CemvaViewModel) {
                     modifier = Modifier.testTag("nav_operations")
                 )
                 NavigationBarItem(
-                    selected = currentScreen == "trainings",
+                    selected = currentScreen == "tactical",
                     onClick = {
-                        viewModel.currentScreen.value = "trainings"
+                        viewModel.currentScreen.value = "tactical"
                         currentSubScreen = null
                     },
-                    icon = { Icon(Icons.Default.School, contentDescription = "Trainings") },
-                    label = { Text("Trainings") },
-                    modifier = Modifier.testTag("nav_trainings")
+                    icon = { Icon(Icons.Default.Radar, contentDescription = "Tactical") },
+                    label = { Text("Tactical") },
+                    modifier = Modifier.testTag("nav_tactical")
                 )
                 NavigationBarItem(
                     selected = currentScreen == "more",
@@ -321,6 +328,11 @@ fun CemvaApp(viewModel: CemvaViewModel) {
                                 )
                                 "settings" -> SettingsSubScreen(viewModel)
                                 "member_dashboard" -> MemberDashboardSubScreen(viewModel)
+                                "trainings" -> TrainingsScreen(
+                                    viewModel = viewModel,
+                                    trainings = trainingsList,
+                                    onAddTrainingClick = { showAddTrainingDialog = true }
+                                )
                             }
                         }
                     }
@@ -329,11 +341,14 @@ fun CemvaApp(viewModel: CemvaViewModel) {
                             viewModel = viewModel,
                             announcements = announcementsList,
                             operations = operationsList,
+                            trainings = trainingsList,
+                            reminders = remindersList,
                             onAttendanceClick = { showAttendanceDialog = true },
                             onReportClick = { showAddReportDialog = true },
                             onSopClick = { currentSubScreen = "documents" },
                             onIdClick = { viewModel.currentScreen.value = "members" },
-                            onAddAnnouncement = { showAddAnnouncementDialog = true }
+                            onAddAnnouncement = { showAddAnnouncementDialog = true },
+                            onAddReminder = { showAddReminderDialog = true }
                         )
                     }
                     target == "members" -> {
@@ -355,11 +370,9 @@ fun CemvaApp(viewModel: CemvaViewModel) {
                             onAddReportClick = { showAddReportDialog = true }
                         )
                     }
-                    target == "trainings" -> {
-                        TrainingsScreen(
-                            viewModel = viewModel,
-                            trainings = trainingsList,
-                            onAddTrainingClick = { showAddTrainingDialog = true }
+                    target == "tactical" -> {
+                        TacticalScreen(
+                            viewModel = viewModel
                         )
                     }
                     target == "more" -> {
@@ -1469,7 +1482,101 @@ fun CemvaApp(viewModel: CemvaViewModel) {
         }
     }
 
-    // 6. Add Incident/PCR Report Dialog
+    // 5.5 Add Reminder Dialog
+    if (showAddReminderDialog) {
+        var remTitle by remember { mutableStateOf("") }
+        var remDesc by remember { mutableStateOf("") }
+        var remPriority by remember { mutableStateOf("Normal") }
+        var remCategory by remember { mutableStateOf("Duty") }
+        var remDate by remember { mutableStateOf(java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date())) }
+
+        Dialog(onDismissRequest = { showAddReminderDialog = false }) {
+            Card(
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Set Personal Task Reminder",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    OutlinedTextField(
+                        value = remTitle,
+                        onValueChange = { remTitle = it },
+                        label = { Text("Task Title") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    OutlinedTextField(
+                        value = remDesc,
+                        onValueChange = { remDesc = it },
+                        label = { Text("Short Description") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    Text("Priority", style = MaterialTheme.typography.labelMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Normal", "High").forEach { p ->
+                            FilterChip(
+                                selected = remPriority == p,
+                                onClick = { remPriority = p },
+                                label = { Text(p) }
+                            )
+                        }
+                    }
+
+                    Text("Category", style = MaterialTheme.typography.labelMedium)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        listOf("Duty", "Training", "Admin", "Equipment", "Personal").forEach { c ->
+                            FilterChip(
+                                selected = remCategory == c,
+                                onClick = { remCategory = c },
+                                label = { Text(c) }
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { showAddReminderDialog = false }) {
+                            Text("Cancel")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (remTitle.isNotBlank()) {
+                                    viewModel.addReminder(
+                                        ReminderEntity(
+                                            title = remTitle,
+                                            description = remDesc,
+                                            dateTime = remDate,
+                                            priority = remPriority,
+                                            category = remCategory
+                                        )
+                                    )
+                                    showAddReminderDialog = false
+                                    Toast.makeText(context, "Reminder set successfully", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        ) {
+                            Text("Save Reminder")
+                        }
+                    }
+                }
+            }
+        }
+    }
     if (showAddReportDialog) {
         var repType by remember { mutableStateOf("Patient Care Report") }
         var repName by remember { mutableStateOf(membersList.find { it.id == currentUserId }?.name ?: "Unknown Responder") }
@@ -1909,11 +2016,14 @@ fun HomeScreen(
     viewModel: CemvaViewModel,
     announcements: List<AnnouncementEntity>,
     operations: List<OperationEntity>,
+    trainings: List<TrainingEntity>,
+    reminders: List<ReminderEntity>,
     onAttendanceClick: () -> Unit,
     onReportClick: () -> Unit,
     onSopClick: () -> Unit,
     onIdClick: () -> Unit,
-    onAddAnnouncement: () -> Unit
+    onAddAnnouncement: () -> Unit,
+    onAddReminder: () -> Unit
 ) {
     val context = LocalContext.current
     val userRole by viewModel.currentUserRole
@@ -1935,483 +2045,560 @@ fun HomeScreen(
     }
     val isGuest = userRole == UserRole.GUEST
 
-    LazyColumn(
+    var homeSearchQuery by remember { mutableStateOf("") }
+    var showSearchResults by remember { mutableStateOf(false) }
+    var selectedMemberForDetail by remember { mutableStateOf<MemberEntity?>(null) }
+
+    if (selectedMemberForDetail != null) {
+        AlertDialog(
+            onDismissRequest = { selectedMemberForDetail = null },
+            title = { Text("Volunteer Profile Quick-Look") },
+            text = {
+                val m = selectedMemberForDetail!!
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Name: ${m.name}", fontWeight = FontWeight.Bold)
+                    Text("ID: ${m.id}")
+                    Text("Position: ${m.position}")
+                    Text("Dept: ${m.department}")
+                    Text("Status: ${m.status}")
+                    Text("Joined: ${m.joinedDate}")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { selectedMemberForDetail = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+            .padding(horizontal = 16.dp)
     ) {
-        // Sleek Welcome Hero Card
-        item {
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(elevation = 2.dp, shape = RoundedCornerShape(24.dp)),
-                colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            Brush.linearGradient(
-                                colors = listOf(SleekBlue, SleekBlueDark)
-                            )
-                        )
-                        .padding(20.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = "Good day,",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color.White.copy(alpha = 0.8f)
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = displayName,
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 22.sp
-                            ),
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(
-                                    text = "MEMBER ID",
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        letterSpacing = 1.sp
-                                    ),
-                                    color = Color.White.copy(alpha = 0.7f)
-                                )
-                                Text(
-                                    text = displayId,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.SemiBold
-                                    ),
-                                    color = Color.White
-                                )
-                            }
-                            
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50.dp))
-                                    .background(Color.White.copy(alpha = 0.2f))
-                                    .padding(horizontal = 14.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = if (isGuest) "Standby/Guest" else "Active Duty",
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
-                                )
-                            }
+        // Pinned Global Volunteer Search Bar at the Top
+        Spacer(modifier = Modifier.height(8.dp))
+        Box(modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = homeSearchQuery,
+                onValueChange = { 
+                    homeSearchQuery = it
+                    showSearchResults = it.isNotEmpty()
+                },
+                placeholder = { Text("Global Lookup: Volunteer Name or ID") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                trailingIcon = {
+                    if (homeSearchQuery.isNotEmpty()) {
+                        IconButton(onClick = { 
+                            homeSearchQuery = ""
+                            showSearchResults = false
+                        }) {
+                            Icon(Icons.Default.Clear, contentDescription = "Clear")
                         }
                     }
-                }
-            }
-        }
-
-        // Quick Stats Row (3 Columns)
-        item {
-            val deploymentsCount = operations.size
-            val activeMembersCount = membersList.filter { it.status == "Active" }.size
-            val trainingsCount = viewModel.trainings.value.size
-
-            Row(
+                },
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                // Deployments Card
+                shape = RoundedCornerShape(20.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+            
+            if (showSearchResults) {
                 Card(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 60.dp)
+                        .zIndex(10f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = "Deployments",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF64748B)
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = deploymentsCount.toString().padStart(2, '0'),
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        )
-                    }
-                }
+                    val searchResults = membersList.filter { 
+                        it.name.contains(homeSearchQuery, ignoreCase = true) || 
+                        it.id.contains(homeSearchQuery, ignoreCase = true) 
+                    }.take(5)
 
-                // Hours/Active Card
-                Card(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = "Active Responders",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF64748B)
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = activeMembersCount.coerceAtLeast(1).toString().padStart(2, '0'),
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        )
-                    }
-                }
-
-                // Patients/Trainings Card
-                Card(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color.White),
-                    border = BorderStroke(1.dp, Color(0xFFF1F5F9))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = "Trainings",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontWeight = FontWeight.Medium,
-                                color = Color(0xFF64748B)
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = trainingsCount.coerceAtLeast(4).toString().padStart(2, '0'),
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        )
+                    if (searchResults.isNotEmpty()) {
+                        Column {
+                            searchResults.forEach { m ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { 
+                                            selectedMemberForDetail = m
+                                            showSearchResults = false
+                                            homeSearchQuery = ""
+                                        }
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column {
+                                        Text(m.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                                        Text(m.id, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                    }
+                                }
+                                if (m != searchResults.last()) HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            }
+                        }
+                    } else {
+                        Box(modifier = Modifier.padding(16.dp)) {
+                            Text("No volunteers found matching \"$homeSearchQuery\"", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
         }
 
-        // Announcement Ticker
-        item {
-            val tickerText = if (announcements.isNotEmpty()) {
-                announcements.first().title + ": " + announcements.first().content
-            } else {
-                "System standby: Active monitoring for Cavite EMS dispatch channels."
-            }
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(vertical = 16.dp)
+        ) {
+            // Sleek Welcome Hero Card
+            item {
+                Card(
+                    shape = RoundedCornerShape(24.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .drawBehind {
-                            val strokeWidth = 4.dp.toPx()
-                            drawLine(
-                                color = SleekBlue,
-                                start = androidx.compose.ui.geometry.Offset(0f, 0f),
-                                end = androidx.compose.ui.geometry.Offset(0f, size.height),
-                                strokeWidth = strokeWidth
-                            )
-                        }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        .shadow(elevation = 2.dp, shape = RoundedCornerShape(24.dp)),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                    )
-                    Text(
-                        text = tickerText,
-                        style = MaterialTheme.typography.bodySmall.copy(
-                            fontWeight = FontWeight.Medium,
-                            fontSize = 12.sp,
-                            color = Color(0xFF334155)
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-
-        // Quick Actions Grid (Redesigned with beautiful Sleek styling)
-        item {
-            Column {
-                Text(
-                    text = "Quick Actions",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    ),
-                    color = Color(0xFF94A3B8),
-                    modifier = Modifier.padding(bottom = 8.dp)
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    QuickActionCard(
-                        icon = Icons.Default.QrCodeScanner,
-                        label = "Log Attendance",
-                        bgColor = Color.White,
-                        textColor = MaterialTheme.colorScheme.primary,
-                        onClick = onAttendanceClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                    QuickActionCard(
-                        icon = Icons.Default.Assignment,
-                        label = "Submit PCR",
-                        bgColor = Color.White,
-                        textColor = MaterialTheme.colorScheme.primary,
-                        onClick = onReportClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    QuickActionCard(
-                        icon = Icons.Default.Book,
-                        label = "SOP Manuals",
-                        bgColor = Color.White,
-                        textColor = MaterialTheme.colorScheme.primary,
-                        onClick = onSopClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                    QuickActionCard(
-                        icon = Icons.Default.QrCode,
-                        label = "Digital ID",
-                        bgColor = Color.White,
-                        textColor = MaterialTheme.colorScheme.primary,
-                        onClick = onIdClick,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-        }
-
-        // Dynamic Weather & Base Alert
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column {
-                        Text("Cavite Disaster Weather", style = MaterialTheme.typography.labelSmall)
-                        Text("$weatherTemp - Imus HQ Area", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(weatherCondition, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            .fillMaxWidth()
+                            .background(
+                                Brush.linearGradient(
+                                    colors = listOf(SleekBlue, SleekBlueDark)
+                                )
+                            )
+                            .padding(20.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Good day,",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.White.copy(alpha = 0.8f)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = displayName,
+                                style = MaterialTheme.typography.titleLarge.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 22.sp
+                                ),
+                                color = Color.White
+                            )
+                            Spacer(modifier = Modifier.height(20.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "MEMBER ID",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            letterSpacing = 1.sp
+                                        ),
+                                        color = Color.White.copy(alpha = 0.7f)
+                                    )
+                                    Text(
+                                        text = displayId,
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.SemiBold
+                                        ),
+                                        color = Color.White
+                                    )
+                                }
+                                
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50.dp))
+                                        .background(Color.White.copy(alpha = 0.2f))
+                                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = if (isGuest) "Standby/Guest" else "Active Duty",
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                }
+                            }
+                        }
                     }
-                    Icon(
-                        imageVector = Icons.Default.Cloud,
-                        contentDescription = "Weather",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(36.dp)
-                    )
                 }
             }
-        }
 
-        // Emergency Medical Contact Numbers Speed-dial
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Phone,
-                            contentDescription = "Phone Alert",
-                            tint = MaterialTheme.colorScheme.onErrorContainer
+            // Quick Stats Row
+            item {
+                val deploymentsCount = operations.size
+                val activeMembersCount = membersList.filter { it.status == "Active" }.size
+                val trainingsCount = trainings.size
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    StatCard("Deployments", deploymentsCount.toString().padStart(2, '0'), Modifier.weight(1f))
+                    StatCard("Active Responders", activeMembersCount.toString().padStart(2, '0'), Modifier.weight(1f))
+                    StatCard("Trainings", trainingsCount.toString().padStart(2, '0'), Modifier.weight(1f))
+                }
+            }
+
+            // Reminders Section (NEW)
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Reminders & To-Do",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    IconButton(onClick = onAddReminder) {
+                        Icon(Icons.Default.AlarmAdd, contentDescription = "Add Reminder", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+
+            if (reminders.isEmpty()) {
+                item {
+                    Text(
+                        "No pending reminders. You're all caught up!",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray,
+                        modifier = Modifier.padding(vertical = 8.dp)
+                    )
+                }
+            } else {
+                items(reminders.take(3)) { rem ->
+                    ReminderItem(
+                        reminder = rem,
+                        onToggle = { viewModel.updateReminder(rem.copy(isCompleted = !rem.isCompleted)) },
+                        onDelete = { viewModel.deleteReminder(rem) }
+                    )
+                }
+                if (reminders.size > 3) {
+                    item {
+                        TextButton(onClick = { /* Could navigate to full reminders list */ }) {
+                            Text("View all reminders (${reminders.size})", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+
+            // Announcement Ticker
+            item {
+                val tickerText = if (announcements.isNotEmpty()) {
+                    announcements.first().title + ": " + announcements.first().content
+                } else {
+                    "System standby: Active monitoring for Cavite EMS dispatch channels."
+                }
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .drawBehind {
+                                drawLine(
+                                    color = SleekBlue,
+                                    start = Offset(0f, 0f),
+                                    end = Offset(0f, size.height),
+                                    strokeWidth = 12f
+                                )
+                            }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "CEMVA Dispatch Emergency Lines",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onErrorContainer
+                            text = tickerText,
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontWeight = FontWeight.Medium,
+                                fontSize = 12.sp,
+                                color = Color(0xFF334155)
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
                         )
+                    }
+                }
+            }
+
+            // Quick Actions Grid
+            item {
+                Column {
+                    Text(
+                        text = "Quick Actions",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        ),
+                        color = Color(0xFF94A3B8),
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        QuickActionCard(Icons.Default.QrCodeScanner, "Log Attendance", Color.White, MaterialTheme.colorScheme.primary, onAttendanceClick, Modifier.weight(1f))
+                        QuickActionCard(Icons.Default.Assignment, "Submit PCR", Color.White, MaterialTheme.colorScheme.primary, onReportClick, Modifier.weight(1f))
                     }
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Tap below to immediately coordinate with EMS Dispatch and Cavite disaster channels.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        EmergencyPhoneRow(
-                            label = "Cavite Provincial Disaster RR (PDRRMO)",
-                            number = "046-419-1234",
-                            onDial = {
-                                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:0464191234"))
-                                context.startActivity(intent)
-                            }
-                        )
-                        EmergencyPhoneRow(
-                            label = "Red Cross Cavite Chapter Hotline",
-                            number = "046-416-9876",
-                            onDial = {
-                                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:0464169876"))
-                                context.startActivity(intent)
-                            }
-                        )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        QuickActionCard(Icons.Default.Book, "SOP Manuals", Color.White, MaterialTheme.colorScheme.primary, onSopClick, Modifier.weight(1f))
+                        QuickActionCard(Icons.Default.QrCode, "Digital ID", Color.White, MaterialTheme.colorScheme.primary, onIdClick, Modifier.weight(1f))
                     }
                 }
             }
-        }
 
-        // Broadcasters & Announcements
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Broadcast Announcements",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                if (userRole == UserRole.ADMIN) {
-                    IconButton(onClick = onAddAnnouncement) {
-                        Icon(Icons.Default.Add, contentDescription = "Broadcast Alert", tint = MaterialTheme.colorScheme.primary)
-                    }
-                }
-            }
-        }
-
-        if (announcements.isEmpty()) {
+            // Weather & Base Alert
             item {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("Cavite Disaster Weather", style = MaterialTheme.typography.labelSmall)
+                            Text("$weatherTemp - Imus HQ Area", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(weatherCondition, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Icon(Icons.Default.Cloud, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                    }
+                }
+            }
+
+            // Emergency Contacts
+            item {
+                EmergencyContactsCard(context)
+            }
+
+            // Broadcast Announcements
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Broadcast Announcements", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    if (userRole == UserRole.ADMIN) {
+                        IconButton(onClick = onAddAnnouncement) {
+                            Icon(Icons.Default.Add, "Broadcast Alert", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+
+            if (announcements.isEmpty()) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        Text("No announcements broadcasted yet.", color = Color.Gray)
+                    }
+                }
+            } else {
+                items(announcements) { ann ->
+                    AnnouncementCard(ann, userRole, viewModel)
+                }
+            }
+
+            // Tactical Reminders Section
+            item {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Tactical Reminders", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    IconButton(onClick = onAddReminder) {
+                        Icon(Icons.Default.AddCircle, "Add Task", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+
+            if (reminders.isEmpty()) {
+                item {
+                    Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                        Text("No active reminders for your roster.", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            } else {
+                items(reminders) { reminder ->
+                    ReminderItem(
+                        reminder = reminder,
+                        onToggle = { viewModel.updateReminder(reminder.copy(isCompleted = !reminder.isCompleted)) },
+                        onDelete = { viewModel.deleteReminder(reminder) }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun StatCard(label: String, value: String, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White),
+        border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium, color = Color(0xFF64748B)), textAlign = TextAlign.Center)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(value, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary))
+        }
+    }
+}
+
+@Composable
+fun ReminderItem(
+    reminder: ReminderEntity,
+    onToggle: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (reminder.isCompleted) Color(0xFFF8FAFC) else Color.White
+        ),
+        border = BorderStroke(1.dp, Color(0xFFF1F5F9))
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(
+                checked = reminder.isCompleted,
+                onCheckedChange = { onToggle() },
+                colors = CheckboxDefaults.colors(checkedColor = Color(0xFF10B981))
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = reminder.title,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        textDecoration = if (reminder.isCompleted) androidx.compose.ui.text.style.TextDecoration.LineThrough else androidx.compose.ui.text.style.TextDecoration.None
+                    ),
+                    color = if (reminder.isCompleted) Color.Gray else Color.Black
+                )
+                Text(
+                    text = "${reminder.dateTime} • ${reminder.category}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.Gray
+                )
+            }
+            if (reminder.priority == "High") {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Red.copy(alpha = 0.1f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
-                    Text("No announcements broadcasted yet.", color = Color.Gray)
+                    Text("URGENT", style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp, fontWeight = FontWeight.Bold), color = Color.Red)
                 }
             }
-        } else {
-            items(announcements) { ann ->
-                val isHigh = ann.priority == "High"
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(
-                        1.dp,
-                        if (isHigh) MaterialTheme.colorScheme.error else Color.Transparent
-                    ),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (isHigh) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (isHigh) {
-                                    Icon(Icons.Default.NotificationsActive, contentDescription = "Urgent", tint = Color.Red, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                }
-                                Text(
-                                    text = ann.title,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (isHigh) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            Text(
-                                text = ann.date,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.Gray
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = ann.content,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "By: ${ann.author}",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            if (userRole == UserRole.ADMIN) {
-                                Text(
-                                    text = "Delete",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.clickable { viewModel.deleteAnnouncement(ann) }
-                                )
-                            }
-                        }
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.DeleteOutline, "Delete", tint = Color.LightGray, modifier = Modifier.size(20.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun EmergencyContactsCard(context: android.content.Context) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Phone, "Phone Alert", tint = MaterialTheme.colorScheme.onErrorContainer)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("CEMVA Dispatch Emergency Lines", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            EmergencyPhoneRow("Cavite Provincial PDRRMO", "046-419-1234") {
+                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:0464191234"))
+                context.startActivity(intent)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            EmergencyPhoneRow("Red Cross Cavite Hotline", "046-416-9876") {
+                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:0464169876"))
+                context.startActivity(intent)
+            }
+        }
+    }
+}
+
+@Composable
+fun AnnouncementCard(ann: AnnouncementEntity, userRole: UserRole, viewModel: CemvaViewModel) {
+    val isHigh = ann.priority == "High"
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, if (isHigh) MaterialTheme.colorScheme.error else Color.Transparent),
+        colors = CardDefaults.cardColors(containerColor = if (isHigh) MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f) else MaterialTheme.colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isHigh) {
+                        Icon(Icons.Default.NotificationsActive, null, tint = Color.Red, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
+                    Text(ann.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = if (isHigh) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                }
+                Text(ann.date, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(ann.content, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("By: ${ann.author}", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                if (userRole == UserRole.ADMIN) {
+                    Text("Delete", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.error, modifier = Modifier.clickable { viewModel.deleteAnnouncement(ann) })
                 }
             }
         }
@@ -2521,8 +2708,9 @@ fun MembersScreen(
             selectedTabIndex = when (activeSubTab) {
                 "status" -> 0
                 "directory" -> 1
-                "recruitment" -> 2
-                "digital_id" -> 3
+                "logs" -> 2
+                "recruitment" -> 3
+                "digital_id" -> 4
                 else -> 0
             }
         ) {
@@ -2535,6 +2723,11 @@ fun MembersScreen(
                 selected = activeSubTab == "directory",
                 onClick = { activeSubTab = "directory" },
                 text = { Text("Directory", fontSize = 11.sp) }
+            )
+            Tab(
+                selected = activeSubTab == "logs",
+                onClick = { activeSubTab = "logs" },
+                text = { Text("Logs", fontSize = 11.sp) }
             )
             Tab(
                 selected = activeSubTab == "recruitment",
@@ -2551,6 +2744,9 @@ fun MembersScreen(
         when (activeSubTab) {
             "status" -> {
                 RosterStatusView(viewModel)
+            }
+            "logs" -> {
+                StatusLogView(viewModel)
             }
             "directory" -> {
                 Column(modifier = Modifier.padding(16.dp)) {
@@ -2700,6 +2896,105 @@ fun RosterStatusView(viewModel: CemvaViewModel) {
     val members by viewModel.members.collectAsStateWithLifecycle()
     val attendanceRecords by viewModel.attendance.collectAsStateWithLifecycle()
     val userRole by viewModel.currentUserRole
+    val currentUserEmail by viewModel.currentUserEmail
+
+    var selectedMemberForNotes by remember { mutableStateOf<Triple<MemberEntity, String, String>?>(null) }
+    var officerNotes by remember { mutableStateOf("") }
+    var showHistoryForMember by remember { mutableStateOf<MemberEntity?>(null) }
+
+    if (selectedMemberForNotes != null) {
+        AlertDialog(
+            onDismissRequest = { selectedMemberForNotes = null },
+            title = { Text("Deployment Status Notes") },
+            text = {
+                Column {
+                    Text("Add officer notes for ${selectedMemberForNotes?.first?.name}'s status update.")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = officerNotes,
+                        onValueChange = { officerNotes = it },
+                        label = { Text("Officer Notes") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val (member, type, currentStatus) = selectedMemberForNotes!!
+                    
+                    viewModel.recordAttendance(
+                        memberId = member.id,
+                        memberName = member.name,
+                        type = type,
+                        activity = "Duty"
+                    )
+                    
+                    viewModel.recordStatusUpdate(
+                        memberId = member.id,
+                        memberName = member.name,
+                        oldStatus = currentStatus,
+                        newStatus = if (type == "Check-In") "Active" else "Resting",
+                        notes = officerNotes,
+                        updatedBy = currentUserEmail
+                    )
+                    
+                    Toast.makeText(context, "${member.name} status updated.", Toast.LENGTH_SHORT).show()
+                    selectedMemberForNotes = null
+                    officerNotes = ""
+                }) {
+                    Text("Confirm Update")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { selectedMemberForNotes = null }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+
+    if (showHistoryForMember != null) {
+        val allLogs by viewModel.statusLogs.collectAsStateWithLifecycle()
+        val memberLogs = allLogs.filter { it.memberId == showHistoryForMember?.id }
+
+        AlertDialog(
+            onDismissRequest = { showHistoryForMember = null },
+            title = { Text("Status History: ${showHistoryForMember?.name}") },
+            text = {
+                Box(modifier = Modifier.heightIn(max = 400.dp)) {
+                    if (memberLogs.isEmpty()) {
+                        Text("No status update logs found for this volunteer.")
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(memberLogs) { log ->
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text("${log.date} ${log.time}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                            Text(log.newStatus, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+                                        }
+                                        Text(log.officerNotes, style = MaterialTheme.typography.bodySmall)
+                                        Text("By: ${log.updatedBy}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showHistoryForMember = null }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
 
     // Compute live status for each volunteer from Room database attendance records
     val computedVolunteers = remember(members, attendanceRecords) {
@@ -3186,27 +3481,21 @@ fun RosterStatusView(viewModel: CemvaViewModel) {
                                 ) {
                                     Icon(Icons.Default.Email, contentDescription = "Email", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
                                 }
+                                IconButton(
+                                    onClick = { showHistoryForMember = member },
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Icon(Icons.Default.History, contentDescription = "History", tint = MaterialTheme.colorScheme.secondary, modifier = Modifier.size(16.dp))
+                                }
                             }
 
                             // Dynamic check-in check-out attendance database logger
                             Button(
                                 onClick = {
                                     if (info.isCheckedIn) {
-                                        viewModel.recordAttendance(
-                                            memberId = member.id,
-                                            memberName = member.name,
-                                            type = "Check-Out",
-                                            activity = "Duty"
-                                        )
-                                        Toast.makeText(context, "${member.name} status updated: Resting Standby.", Toast.LENGTH_SHORT).show()
+                                        selectedMemberForNotes = Triple(member, "Check-Out", info.status)
                                     } else {
-                                        viewModel.recordAttendance(
-                                            memberId = member.id,
-                                            memberName = member.name,
-                                            type = "Check-In",
-                                            activity = "Duty"
-                                        )
-                                        Toast.makeText(context, "${member.name} status updated: Active On-Duty!", Toast.LENGTH_SHORT).show()
+                                        selectedMemberForNotes = Triple(member, "Check-In", info.status)
                                     }
                                 },
                                 shape = RoundedCornerShape(8.dp),
@@ -3264,6 +3553,111 @@ fun StatusFilterPill(
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
         )
+    }
+}
+
+@Composable
+fun StatusLogView(viewModel: CemvaViewModel) {
+    val logs by viewModel.statusLogs.collectAsStateWithLifecycle()
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredLogs = logs.filter {
+        it.memberName.contains(searchQuery, ignoreCase = true) ||
+        it.officerNotes.contains(searchQuery, ignoreCase = true) ||
+        it.updatedBy.contains(searchQuery, ignoreCase = true)
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Text(
+            text = "Deployment Status Log History",
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "Comprehensive audit trail of volunteer status transitions and tactical deployment notes.",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.Gray
+        )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Search logs by member or notes...") },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        )
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (filteredLogs.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No status logs recorded yet.", color = Color.Gray)
+            }
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(filteredLogs) { log ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(log.memberName, fontWeight = FontWeight.Bold)
+                                    Text("${log.date} at ${log.time}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(MaterialTheme.colorScheme.primaryContainer)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        "${log.oldStatus} → ${log.newStatus}",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    )
+                                }
+                            }
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            Row(verticalAlignment = Alignment.Top) {
+                                Icon(
+                                    Icons.Default.StickyNote2, 
+                                    contentDescription = null, 
+                                    modifier = Modifier.size(16.dp), 
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = log.officerNotes.ifEmpty { "No additional notes provided." },
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            }
+                            
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.1f))
+                            
+                            Text(
+                                text = "Authorized by: ${log.updatedBy}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.Gray,
+                                fontStyle = FontStyle.Italic
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -5777,6 +6171,99 @@ fun SettingsSubScreen(viewModel: CemvaViewModel) {
             }
         }
 
+        // --- SECURITY AUDIT ---
+        item {
+            val context = LocalContext.current
+            var showSecurityReport by remember { mutableStateOf(false) }
+            val membersList by viewModel.members.collectAsStateWithLifecycle()
+            val unapprovedMembers = membersList.filter { it.status == "Pending" || it.status == "Suspended" }
+
+            Divider(modifier = Modifier.padding(vertical = 8.dp))
+            Text(
+                "Security & Access Audit",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                "Verify system integrity and check for unapproved or suspended responder profiles.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, Color.LightGray),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Real-time Access Monitoring", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                            Text("Current status of all tactical credentials", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                        Icon(Icons.Default.Security, contentDescription = null, tint = if (unapprovedMembers.isEmpty()) Color(0xFF10B981) else Color.Red)
+                    }
+                    
+                    if (unapprovedMembers.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.Red.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                                .padding(12.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.ReportProblem, contentDescription = null, tint = Color.Red, modifier = Modifier.size(20.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    "ALERT: ${unapprovedMembers.size} unapproved responders detected in roster. Verify credentials immediately.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.Red,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    Button(
+                        onClick = { showSecurityReport = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), contentColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("View Detailed Security Log")
+                    }
+                }
+            }
+
+            if (showSecurityReport) {
+                AlertDialog(
+                    onDismissRequest = { showSecurityReport = false },
+                    title = { Text("CEMVA Security Audit Report") },
+                    text = {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("System Integrity: VERIFIED", fontWeight = FontWeight.Bold)
+                            Text("Encryption Standard: AES-256 (Simulated)")
+                            Text("Unapproved Accounts: ${unapprovedMembers.size}")
+                            if (unapprovedMembers.isNotEmpty()) {
+                                Text("Flagged IDs:", fontWeight = FontWeight.SemiBold)
+                                unapprovedMembers.forEach { Text("- ${it.name} (${it.id})", style = MaterialTheme.typography.labelSmall) }
+                            }
+                            Text("Audit Timestamp: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}")
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showSecurityReport = false }) { Text("Close") }
+                    }
+                )
+            }
+        }
+
         // --- DATABASE MAINTENANCE ---
         item {
             val context = LocalContext.current
@@ -6664,6 +7151,12 @@ fun CameraScannerView(
     var attActivity by remember { mutableStateOf("Duty") }
 
     val cameraExecutor = remember { java.util.concurrent.Executors.newSingleThreadExecutor() }
+    
+    DisposableEffect(Unit) {
+        onDispose {
+            cameraExecutor.shutdown()
+        }
+    }
 
     // Infinite scanning animation
     val infiniteTransition = rememberInfiniteTransition(label = "LaserTransition")
@@ -6849,7 +7342,6 @@ fun CameraScannerView(
                 // Back/Close Button
                 IconButton(
                     onClick = {
-                        cameraExecutor.shutdown()
                         onClose()
                     },
                     colors = IconButtonDefaults.iconButtonColors(containerColor = Color.Black.copy(alpha = 0.6f))

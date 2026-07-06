@@ -11,6 +11,9 @@ interface MemberDao {
     @Query("SELECT * FROM members WHERE id = :id LIMIT 1")
     suspend fun getMemberById(id: String): MemberEntity?
 
+    @Query("SELECT COUNT(*) FROM members")
+    suspend fun getMemberCount(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMember(member: MemberEntity)
 
@@ -121,5 +124,44 @@ interface UserAccountDao {
 
     @Delete
     suspend fun deleteUserAccount(user: UserAccountEntity)
+}
+
+@Dao
+interface StatusLogDao {
+    @Query("SELECT * FROM status_logs ORDER BY timestamp DESC")
+    fun getAllStatusLogs(): Flow<List<StatusLogEntity>>
+
+    @Query("SELECT * FROM status_logs WHERE memberId = :memberId ORDER BY timestamp DESC")
+    fun getLogsByMemberId(memberId: String): Flow<List<StatusLogEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStatusLog(log: StatusLogEntity)
+}
+
+@Dao
+interface EmergencyReportDao {
+    @Query("SELECT * FROM emergency_reports ORDER BY timestamp DESC")
+    fun getAllEmergencyReports(): Flow<List<EmergencyReportEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEmergencyReport(report: EmergencyReportEntity)
+
+    @Update
+    suspend fun updateEmergencyReport(report: EmergencyReportEntity)
+
+    @Delete
+    suspend fun deleteEmergencyReport(report: EmergencyReportEntity)
+}
+
+@Dao
+interface EmergencyAlertDao {
+    @Query("SELECT * FROM emergency_alerts ORDER BY timestamp DESC")
+    fun getAllEmergencyAlerts(): Flow<List<EmergencyAlertEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEmergencyAlert(alert: EmergencyAlertEntity)
+
+    @Delete
+    suspend fun deleteEmergencyAlert(alert: EmergencyAlertEntity)
 }
 
