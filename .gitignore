@@ -1,18 +1,49 @@
+# Gradle files
+.gradle/
+build/
+/*/build/
+.kotlin/
+
+# IDE files
 *.iml
-.gradle
-.kotlin
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+.idea/
+*.ipr
+*.iws
+.navigation/
+
+# Built artifacts
+*.apk
+*.aar
+*.ap_
+*.aab
+/app/build/
+.build-outputs/
+
+# Local configuration
 local.properties
 .env
-debug.keystore
+.env.example.local
+.env.local
+
+# Keystore / Secrets
+*.jks
+*.keystore
+!debug.keystore.base64
+google-services.json
+
+# Log files
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# SQLite / Database dumps (Room)
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Crashlytics / build caches
+.mock/
+.gradle-cache/

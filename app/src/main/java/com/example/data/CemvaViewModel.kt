@@ -486,6 +486,18 @@ class CemvaViewModel(application: Application) : AndroidViewModel(application) {
         qrVerificationResult.value = null
     }
 
+    fun repopulateInitialDataMock() {
+        viewModelScope.launch {
+            try {
+                database.clearAllTables()
+                repository.populateInitialData()
+                triggerSync()
+            } catch (e: Exception) {
+                Log.e("CemvaViewModel", "Database clear and repopulate failed", e)
+            }
+        }
+    }
+
     // Toggle skill checklist
     fun toggleUserSkill(skillName: String) {
         val current = userSkillsChecklist.value.toMutableMap()
