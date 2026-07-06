@@ -1,29 +1,17 @@
 # Cemva App - Tactical Emergency and Member Management System
 
-## How to Install and Run on Android (No PC Required)
+## How to Download from GitHub
 
-To run this app on your Android device without using AI Studio, follow these simple steps:
+This app is set up to build automatically. To download the latest version:
 
-### Step 1: Generate the APK File
-1.  In the AI Studio interface, look at the **left sidebar**.
-2.  Click on the **Settings** icon (the gear ⚙️ icon at the bottom).
-3.  Find the **"Generate APK"** button and click it.
-4.  Wait for the progress bar to finish. This builds your standalone Android app.
-5.  Once finished, a **"Download APK"** button will appear. Click it to download the `app-debug.apk` file.
+1.  Navigate to the **Releases** section on the right side of this GitHub page.
+2.  Look for the latest release (e.g., "v1.0.0" or "Latest Build").
+3.  Under **Assets**, click on `app-debug.apk` to download it directly to your Android device.
 
-### Step 2: Transfer to your Phone (If on Mobile, skip this)
-*   If you are already using AI Studio on your phone's browser, the file is already on your device.
-*   If you are on a PC, you can send the APK to your phone via Email, Google Drive, or Telegram.
+## Installation Instructions
 
-### Step 3: Install the App
-1.  Open the **Downloads** folder on your Android phone.
-2.  Tap on the `app-debug.apk` file.
-3.  If your phone says "Install unknown apps," tap **Settings** and toggle the switch to **Allow from this source**.
-4.  Tap **Install**.
+1.  **Download**: Get the `.apk` file from the GitHub Releases page.
+2.  **Enable Unknown Sources**: If prompted, allow your browser or file manager to "Install unknown apps" in your Android settings.
+3.  **Install**: Tap the downloaded file and select **Install**.
+4.  **Run**: Find the **Cemva App** icon in your app drawer and launch it.
 
-### Step 4: Run the App
-1.  Once installed, look for the **Cemva App** icon on your home screen or app drawer.
-2.  Open it and you are ready to go!
-
----
-**Note:** This app uses Google Maps and Firebase for location tracking and data syncing. Ensure you have an active internet connection for the best experience.
